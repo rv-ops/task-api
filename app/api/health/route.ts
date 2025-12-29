@@ -1,31 +1,48 @@
-import { NextResponse } from "next/server";
+import { Pool } from "pg";
+import os from "os";
 
-/**
- * Health check endpoint
- *
- * Design goals:
- * - MUST never block (ALB friendly)
- * - MUST clearly show which environment served the request
- * - MUST work correctly with ECS + Next.js (runtime env vars)
- *
- * IMPORTANT:
- * Next.js inlines env vars at build time.
- * This endpoint only reads runtime env vars.
- */
+let pool: Pool | null = null;
+
+function getPool(): Pool {
+  if (!process.env.DATABASE_URL) {
+    throw new Error("DATABASE_URL not set");
+  }
+
+  if (!pool) {
+    pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false }, // required for RDS
+    });
+  }
+
+  return pool;
+}
+
 export async function GET() {
-  return NextResponse.json({
-    status: "ok",
+  const env = process.env.APP_ENV || "unknown";
 
-    // Do NOT touch the database here (health must not block)
-    database: "unknown",
+  try {
+    // lightweight DB check
+    await getPool().query("SELECT 1");
 
-    // Runtime environment (set by ECS task definition)
-    environment: process.env.APP_ENV ?? "unknown",
-
-    // Unique per-container identifier (useful for load-balancing proof)
-    instanceId: process.env.HOSTNAME ?? "unknown",
-
-    // Helpful for debugging & demo recording
-    timestamp: new Date().toISOString(),
-  });
+    return Response.json({
+      status: "ok",
+      database: "connected",
+      environment: env,
+      service: `task-api-${env}`,
+      instanceId: os.hostname(),
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    return Response.json(
+      {
+        status: "error",
+        database: "down",
+        environment: env,
+        service: `task-api-${env}`,
+        error: err.message,
+      },
+      { status: 500 }
+    );
+  }
 }
