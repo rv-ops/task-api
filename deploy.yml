@@ -1,0 +1,64 @@
+name: CI/CD – Build & Deploy to ECS
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  AWS_REGION: ap-south-1
+  ECR_REPOSITORY: task-api
+  ECS_CLUSTER: task-api
+  ECS_SERVICE_DEV: task-api-dev
+  ECS_SERVICE_PROD: task-api-prod
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1️⃣ Checkout source
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2️⃣ Configure AWS credentials
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # 3️⃣ Login to Amazon ECR
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # 4️⃣ Build & push DEV image
+      - name: Build and push DEV image
+        run: |
+          docker build -t $ECR_REPOSITORY:dev .
+          docker tag $ECR_REPOSITORY:dev ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com/$ECR_REPOSITORY:dev
+          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com/$ECR_REPOSITORY:dev
+
+      # 5️⃣ Build & push PROD image
+      - name: Build and push PROD image
+        run: |
+          docker build -t $ECR_REPOSITORY:prod .
+          docker tag $ECR_REPOSITORY:prod ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com/$ECR_REPOSITORY:prod
+          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com/$ECR_REPOSITORY:prod
+
+      # 6️⃣ Force ECS DEV redeploy
+      - name: Deploy DEV service
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE_DEV \
+            --force-new-deployment
+
+      # 7️⃣ Force ECS PROD redeploy
+      - name: Deploy PROD service
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE_PROD \
+            --force-new-deployment
